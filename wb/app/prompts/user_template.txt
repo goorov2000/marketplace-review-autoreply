@@ -1,0 +1,21 @@
+Сценарий категории: {category}
+
+Цель сценария:
+{intent}
+
+Обязательно включить:
+{must_include}
+
+Избегать:
+{must_avoid}
+
+Ограничение по предложениям: до {max_sentences}
+
+Данные отзыва:
+- userName: {user_name}
+- createdDate: {created_date}
+- stars: {stars}
+- bables: {bables}
+- text: {text}
+
+Напишите финальный ответ покупателю.

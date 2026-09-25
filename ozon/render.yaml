@@ -1,0 +1,41 @@
+services:
+  - type: cron
+    name: ozon-auto-replies
+    runtime: python
+    plan: starter
+    schedule: "*/5 * * * *"
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python ozon_reviews_reply.py"
+    envVars:
+      - key: OZON_CLIENT_ID
+        sync: false
+      - key: OZON_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        value: gpt-5.4-mini
+      - key: PROMPT_PATH
+        value: prompt_ozon_ru.txt
+      - key: DRY_RUN
+        value: "1"
+      - key: SKIP_EMPTY
+        value: "1"
+      - key: ONLY_UNANSWERED
+        value: "1"
+      - key: MARK_EMPTY_AS_PROCESSED
+        value: "0"
+      - key: EMPTY_REPLY_LEVEL
+        value: soft
+      - key: PAGE_LIMIT
+        value: "50"
+      - key: MAX_PAGES
+        value: "10"
+      - key: LOG_LEVEL
+        value: INFO
+      - key: LOG_SHOW_LLM
+        value: "0"
+      - key: LOG_PII_MASK
+        value: "1"
+      - key: LOG_MAX_LLM
+        value: "20"

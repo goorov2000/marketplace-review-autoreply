@@ -1,0 +1,13 @@
+# Секреты и локальное окружение
+.env
+.env.*
+!.env.example
+.venv/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Логи
+*.log
