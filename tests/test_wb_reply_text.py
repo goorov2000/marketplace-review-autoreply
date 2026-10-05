@@ -1,6 +1,8 @@
 """Unit-тесты на чистые функции WB-сервиса (wb/app/core/postprocess.py). Без сети."""
 import re
 
+import pytest
+
 from app.core.postprocess import SIGNATURE, finalize_reply, make_short_reply
 
 REVIEW = {
@@ -27,6 +29,16 @@ def test_finalize_reply_adds_greeting_capitalizes_you_and_signs_once():
     assert out2.startswith("Добрый вечер, Мария!")
     assert out2.count("Добр") == 1
     assert out2.count(SIGNATURE) == 1
+
+
+@pytest.mark.parametrize("greeting", ["Здравствуйте, Мария!", "Здравствуйте!", "здравствуйте, Мария!"])
+def test_finalize_reply_keeps_model_greeting_without_adding_another(greeting):
+    out = finalize_reply(f"{greeting}\n\nСпасибо за отзыв.", REVIEW)
+    assert out.startswith(greeting)
+    assert "Добрый день" not in out
+    assert out.lower().count("здравствуйте") == 1
+    assert "Спасибо за отзыв." in out
+    assert out.count(SIGNATURE) == 1
 
 
 def test_finalize_reply_trims_long_text_and_keeps_signature():

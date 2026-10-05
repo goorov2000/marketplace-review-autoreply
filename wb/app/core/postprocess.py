@@ -96,7 +96,7 @@ def capitalize_formal_you(text: str) -> str:
 
 def ensure_greeting_prefix(text: str, created: str, user_name: str) -> str:
     s = (text or "").strip()
-    if re.match(r"^(Доброе утро|Добрый день|Добрый вечер|Доброй ночи)[,! ]", s, flags=re.IGNORECASE):
+    if re.match(r"^(Доброе утро|Добрый день|Добрый вечер|Доброй ночи|Здравствуйте)[,! ]", s, flags=re.IGNORECASE):
         return s
     return f"{compose_greeting(created, user_name)}\n\n{s}"
 
