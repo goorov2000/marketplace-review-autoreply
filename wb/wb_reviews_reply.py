@@ -21,9 +21,8 @@ if _dry_run not in {"0", "1"}:
     raise ValueError("DRY_RUN должен быть 0 или 1")
 DRY_RUN = _dry_run == "1"
 MAX_COUNT = int(os.getenv("MAX_COUNT", "50"))
-MAX_PAGES = int(os.getenv("MAX_PAGES", "10"))
-if MAX_COUNT < 1 or MAX_PAGES < 1:
-    raise ValueError("MAX_COUNT и MAX_PAGES должны быть положительными")
+if MAX_COUNT < 1:
+    raise ValueError("MAX_COUNT должен быть положительным")
 
 RULES_PATH = os.getenv("CLASSIFICATION_RULES_PATH", "app/config/classification_rules.json")
 SCENARIOS_PATH = os.getenv("SCENARIOS_PATH", "app/config/scenarios.json")
@@ -71,7 +70,9 @@ def main():
     # Сначала снимок кандидатов: публикация удаляет отзыв из isAnswered=false,
     # поэтому смещение по этой выборке нельзя увеличивать во время публикации.
     candidates = []
-    for _ in range(MAX_PAGES):
+    # Низкие оценки остаются без ответа: фиксированное окно страниц навсегда
+    # скрывало бы старые 4–5★ за ними. Читаем до кандидатов или конца очереди.
+    while True:
         data = wb.list_feedbacks(take=take, skip=skip)
         feedbacks = data.get("feedbacks") or []
         count_unanswered = data.get("countUnanswered")

@@ -54,6 +54,22 @@ def test_wb_does_not_skip_reviews_when_published_items_leave_queue(wb, monkeypat
     assert len(pending) == 50
 
 
+def test_wb_reaches_old_positive_review_behind_many_skipped_ratings(wb, monkeypatch):
+    queue = [{"id": str(i), "productValuation": 1} for i in range(1000)]
+    queue.append({"id": "old-positive", "productValuation": 5})
+    client = Mock()
+    client.list_feedbacks.side_effect = lambda *, take, skip: {"feedbacks": queue[skip:skip + take]}
+    pipeline = Mock()
+    pipeline.process.return_value = SimpleNamespace(final_reply="Спасибо!")
+    monkeypatch.setattr(wb, "WBClient", lambda _: client)
+    monkeypatch.setattr(wb, "build_pipeline", lambda: pipeline)
+    monkeypatch.setattr(wb, "MAX_COUNT", 2)
+    monkeypatch.setattr(wb, "DRY_RUN", False)
+    assert wb.main() == 0
+    client.answer.assert_called_once_with("old-positive", "Спасибо!")
+    pipeline.process.assert_called_once_with(queue[-1])
+
+
 @pytest.fixture
 def ozon_run(monkeypatch):
     monkeypatch.setattr(ozon.time, "sleep", lambda _: None)

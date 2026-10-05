@@ -50,3 +50,23 @@ def test_probe_failure_does_not_include_response_secrets(monkeypatch):
         wizard.probe("ozon", {"OZON_CLIENT_ID": "123", "OZON_API_KEY": "fake-private"})
     assert "fake-private" not in str(error.value)
     assert post.call_args.args[0].endswith("/v1/review/list")
+
+
+def test_invalid_header_exception_does_not_echo_entered_key(tmp_path, monkeypatch, capsys):
+    path = tmp_path / "keys.env"
+    original = "OPENAI_API_KEY=fake-openai\n"
+    path.write_text(original)
+    secret = "fake-private-first\nfake-private-second"
+    monkeypatch.setattr(sys, "argv", ["configure", "ozon", "--env-file", str(path)])
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda _: "123")
+    monkeypatch.setattr(wizard.getpass, "getpass", lambda _: secret)
+    # Настоящая валидация requests, без отправки в сеть.
+    def prepare_only(*args, **kwargs):
+        return wizard.requests.Request("POST", args[0], headers=kwargs["headers"]).prepare()
+    monkeypatch.setattr(wizard.requests, "post", prepare_only)
+    assert wizard.main() == 1
+    output = capsys.readouterr()
+    assert output.err.strip() == "InvalidHeader"
+    assert "fake-private" not in output.out + output.err
+    assert path.read_text() == original

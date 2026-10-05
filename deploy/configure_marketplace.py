@@ -82,7 +82,8 @@ def main() -> int:
         save(args.env_file, values)
     except (requests.RequestException, ValueError, OSError, KeyError) as error:
         # requests-исключения могут включать URL/ответ; выводим только класс.
-        message = str(error) if isinstance(error, ValueError) else type(error).__name__
+        message = (str(error) if isinstance(error, ValueError)
+                   and not isinstance(error, requests.RequestException) else type(error).__name__)
         print(message, file=sys.stderr)
         return 1
     print(f"{args.market}: чтение отзывов проверено, ключ сохранён. Публикация не включалась.")
