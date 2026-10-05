@@ -5,6 +5,7 @@ import getpass
 import grp
 import os
 from pathlib import Path
+import re
 import sys
 import tempfile
 
@@ -31,6 +32,33 @@ def save(path: Path, values: dict[str, str]) -> None:
         Path(temporary).unlink(missing_ok=True)
 
 
+def ozon_error_hint(response, values: dict[str, str]) -> str:
+    """Только фиксированные пояснения: ни сообщение API, ни заголовки не печатаем."""
+    try:
+        data = response.json()
+    except ValueError:
+        return "Ozon вернул не JSON: возможен сетевой запрет; подписка по этому ответу не определена."
+    if not isinstance(data, dict):
+        return "Ozon не уточнил причину отказа в стандартном формате."
+    message = data.get("message")
+    message = message if isinstance(message, str) else ""
+    for value in values.values():
+        if value:
+            message = message.replace(value, "")
+    message = message.casefold()
+    code = data.get("code")
+    prefix = f"Код ошибки Ozon: {code}. " if type(code) is int and -32768 <= code <= 32767 else ""
+    if any(word in message for word in ("premium", "subscription", "подписк")):
+        return prefix + "Ozon указывает на ограничение подписки/тарифа кабинета для API отзывов."
+    if re.search(r"\bip\b|whitelist|allowlist|бел[а-я]+ спис", message):
+        return prefix + "Ozon указывает на ограничение доступа по IP-адресу."
+    if any(word in message for word in ("api-key", "api_key", "client-id", "client_id", "unauthenticated", "credential")):
+        return prefix + "Ozon указывает на проверку авторизации: сверьте Client ID и ключ одного кабинета."
+    if any(word in message for word in ("permission", "scope", "role", "прав")):
+        return prefix + "Ozon указывает на права доступа; для отзывов нужен Review. Причина ограничения кабинета ещё не установлена."
+    return prefix + "Ozon не уточнил причину: возможны права ключа, доступ кабинета к отзывам или неверная пара Client ID/ключ."
+
+
 def probe(market: str, values: dict[str, str]) -> None:
     if market == "wb":
         response = requests.get(
@@ -46,7 +74,10 @@ def probe(market: str, values: dict[str, str]) -> None:
         )
     if response.status_code != 200:
         # Тело ответа может содержать фрагмент ключа — не выводим его.
-        raise ValueError(f"API {market} вернул HTTP {response.status_code}; ключ не сохранён")
+        detail = ""
+        if market == "ozon":
+            detail = "\n" + ozon_error_hint(response, values)
+        raise ValueError(f"API {market} вернул HTTP {response.status_code}; ключ не сохранён{detail}")
     data = response.json()
     if not isinstance(data, dict) or data.get("error") or (market == "ozon" and "reviews" not in data):
         raise ValueError(f"API {market} не подтвердил чтение отзывов; ключ не сохранён")
