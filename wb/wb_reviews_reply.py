@@ -16,8 +16,14 @@ OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 OPENAI_PROJECT = os.getenv("OPENAI_PROJECT", "")
 OPENAI_MAXTOKENS = int(os.getenv("OPENAI_MAXTOKENS", "220"))
-DRY_RUN = os.getenv("DRY_RUN", "1") == "1"
+_dry_run = os.getenv("DRY_RUN", "1")
+if _dry_run not in {"0", "1"}:
+    raise ValueError("DRY_RUN должен быть 0 или 1")
+DRY_RUN = _dry_run == "1"
 MAX_COUNT = int(os.getenv("MAX_COUNT", "50"))
+MAX_PAGES = int(os.getenv("MAX_PAGES", "10"))
+if MAX_COUNT < 1 or MAX_PAGES < 1:
+    raise ValueError("MAX_COUNT и MAX_PAGES должны быть положительными")
 
 RULES_PATH = os.getenv("CLASSIFICATION_RULES_PATH", "app/config/classification_rules.json")
 SCENARIOS_PATH = os.getenv("SCENARIOS_PATH", "app/config/scenarios.json")
@@ -62,7 +68,10 @@ def main():
     skip = 0
     take = 100
 
-    while True:
+    # Сначала снимок кандидатов: публикация удаляет отзыв из isAnswered=false,
+    # поэтому смещение по этой выборке нельзя увеличивать во время публикации.
+    candidates = []
+    for _ in range(MAX_PAGES):
         data = wb.list_feedbacks(take=take, skip=skip)
         feedbacks = data.get("feedbacks") or []
         count_unanswered = data.get("countUnanswered")
@@ -80,26 +89,26 @@ def main():
             break
 
         for fb in feedbacks:
-            if total >= MAX_COUNT:
-                logging.info("Достигнут лимит MAX_COUNT=%s, остановка.", MAX_COUNT)
-                return
-
-            fid = fb.get("id") or fb.get("feedbackId")
             stars = int(fb.get("productValuation") or 0)
-            logging.info("Обработка отзыва id=%s, stars=%s", fid, stars)
-
             if stars < 4:
                 skipped_low_rating += 1
-                logging.info("Пропуск id=%s: рейтинг ниже 4 (%s)", fid, stars)
                 continue
+            candidates.append(fb)
+            if len(candidates) >= MAX_COUNT:
+                break
 
-            try:
-                artifacts = pipeline.process(fb)
-            except Exception as e:
-                logging.error("Ошибка обработки id=%s: %s", fid, e)
-                failed += 1
-                continue
+        if len(candidates) >= MAX_COUNT or len(feedbacks) < take:
+            break
 
+        skip += len(feedbacks)
+        time.sleep(0.35)
+
+    # Лимит относится к попыткам, включая неудачные запросы.
+    for fb in candidates:
+        fid = fb.get("id") or fb.get("feedbackId")
+        stars = int(fb.get("productValuation") or 0)
+        try:
+            artifacts = pipeline.process(fb)
             if DRY_RUN:
                 print("\n--- DRY_RUN ---")
                 print(f"id: {fid} | stars: {stars} | category: {artifacts.category.value}")
@@ -107,23 +116,14 @@ def main():
                 print(artifacts.final_reply)
                 print("---------------")
             else:
-                try:
-                    wb.answer(str(fid), artifacts.final_reply)
-                    published += 1
-                    logging.info("Ответ опубликован для id=%s", fid)
-                    time.sleep(0.35)
-                except Exception as e:
-                    logging.error("WB ошибка публикации для id=%s: %s", fid, e)
-                    failed += 1
-                    continue
-
+                wb.answer(str(fid), artifacts.final_reply)
+                published += 1
+                logging.info("Ответ опубликован для id=%s", fid)
+                time.sleep(0.35)
             total += 1
-
-        if len(feedbacks) < take:
-            break
-
-        skip += len(feedbacks)
-        time.sleep(0.35)
+        except Exception as e:
+            logging.error("Ошибка по id=%s: %s", fid, e)
+            failed += 1
 
     logging.info(
         "Готово. Обработано=%s, опубликовано=%s, пропущено(рейтинг<4)=%s, ошибок=%s",
@@ -132,7 +132,8 @@ def main():
         skipped_low_rating,
         failed,
     )
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

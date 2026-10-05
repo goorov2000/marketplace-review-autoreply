@@ -15,7 +15,10 @@ OPENAI_API_KEY  = os.getenv("OPENAI_API_KEY")
 OPENAI_MODEL    = os.getenv("OPENAI_MODEL", "gpt-5.4-mini")
 PROMPT_PATH     = os.getenv("PROMPT_PATH", "prompt_ozon_ru.txt")
 
-DRY_RUN         = os.getenv("DRY_RUN", "1") == "1"
+_dry_run = os.getenv("DRY_RUN", "1")
+if _dry_run not in {"0", "1"}:
+    raise ValueError("DRY_RUN должен быть 0 или 1")
+DRY_RUN         = _dry_run == "1"
 SKIP_EMPTY      = os.getenv("SKIP_EMPTY", "1") == "1"           # пропускать отзывы без текста, если не включён MARK_EMPTY_AS_PROCESSED
 ONLY_UNANSWERED = os.getenv("ONLY_UNANSWERED", "1") == "1"
 
@@ -25,6 +28,9 @@ EMPTY_REPLY_LEVEL       = os.getenv("EMPTY_REPLY_LEVEL", "soft")            # so
 
 PAGE_LIMIT      = int(os.getenv("PAGE_LIMIT", os.getenv("MAX_COUNT", "100")))   # 20..100
 MAX_PAGES       = int(os.getenv("MAX_PAGES", "10"))
+MAX_COUNT       = int(os.getenv("MAX_COUNT", "50"))
+if MAX_COUNT < 1 or MAX_PAGES < 1 or PAGE_LIMIT < 1:
+    raise ValueError("MAX_COUNT, MAX_PAGES и PAGE_LIMIT должны быть положительными")
 
 LOG_LEVEL       = os.getenv("LOG_LEVEL", "INFO").upper()
 LOG_SHOW_LLM    = os.getenv("LOG_SHOW_LLM", "1") == "1"
@@ -392,69 +398,63 @@ def main():
 
     reviews = list_reviews_unprocessed(PAGE_LIMIT, MAX_PAGES)
 
-    candidates = []
-    failed = 0
-    empty_published = 0
+    failed = empty_published = attempted = 0
+    processed_llm = processed_local = published = 0
+    llm_logs_emitted = 0
     for r in reviews:
+        if attempted >= MAX_COUNT:
+            break
         rid = r.get("id")
         stars = int(r.get("rating") or 0)
         text = r.get("text") or ""
         created_iso = r.get("published_at")
         buyer_name = ""
 
-        # Если отзыв без текста:
-        if not text.strip():
-            # Если включён режим автопометки — публикуем короткую заглушку и переводим в processed
-            if MARK_EMPTY_AS_PROCESSED:
-                reply = empty_review_comment(stars, level=EMPTY_REPLY_LEVEL)
-                try:
-                    if DRY_RUN:
-                        logging.info("[EMPTY->PROC] id=%s ★%s | out: %s", rid, stars, reply)
-                    else:
-                        _ = create_comment(rid, reply, mark_processed=True)
-                        empty_published += 1
-                        time.sleep(0.5)
-                except Exception as e:
-                    failed += 1
-                    logging.warning("Ошибка по пустому отзыву id=%s: %s", rid, e)
-                # Уже обработали — дальше не идём
-                continue
-            # Иначе работаем по старой логике: можно пропустить такие отзывы
-            if SKIP_EMPTY:
-                continue
+        if not text.strip() and SKIP_EMPTY and not MARK_EMPTY_AS_PROCESSED:
+            continue
 
-        # Если просим только без ответов — проверяем
-        if ONLY_UNANSWERED:
-            if (r.get("comments_amount") or 0) > 0:
+        # Проверка существующего ответа — в том числе перед заглушкой для пустого.
+        try:
+            if ONLY_UNANSWERED and (r.get("comments_amount") or 0) > 0:
                 comments = list_comments(rid, limit=20, offset=0, sort_dir="ASC")
                 if comments:
                     continue
+        except Exception as e:
+            attempted += 1
+            failed += 1
+            logging.warning("Ошибка проверки комментариев id=%s: %s", rid, e)
+            continue
 
-        candidates.append({"id": rid, "stars": stars, "text": text, "created": created_iso, "name": buyer_name})
-
-    processed_llm = processed_local = published = 0
-    llm_logs_emitted = 0
-
-    for c in candidates:
+        attempted += 1
         try:
-            cls = classify(c["text"])
-            reply = local_template(c["name"], c["stars"], c["text"])
+            if not text.strip() and MARK_EMPTY_AS_PROCESSED:
+                reply = empty_review_comment(stars, level=EMPTY_REPLY_LEVEL)
+                if DRY_RUN:
+                    logging.info("[DRY_RUN] id=%s ★%s | out: %s", rid, stars, reply)
+                else:
+                    create_comment(rid, reply, mark_processed=True)
+                    empty_published += 1
+                    time.sleep(0.5)
+                continue
+
+            cls = classify(text)
+            reply = local_template(buyer_name, stars, text)
             used_llm = False
 
             if reply is None:
                 used_llm = True
-                reply, _ = gen_with_openai(c["name"], c["stars"], c["text"], c["created"])
-                reply = fix_response(reply, c["stars"], cls, c["text"])
+                reply, _ = gen_with_openai(buyer_name, stars, text, created_iso)
+                reply = fix_response(reply, stars, cls, text)
 
             if DRY_RUN:
-                pass
+                logging.info("[DRY_RUN] id=%s ★%s | out: %s", rid, stars, mask_pii(reply))
             else:
-                _ = create_comment(c["id"], reply, mark_processed=True)
+                create_comment(rid, reply, mark_processed=True)
                 published += 1
                 time.sleep(0.6)
 
             if used_llm and llm_logs_emitted < LOG_MAX_LLM:
-                log_llm(c["id"], c["stars"], cls, c["text"], reply)
+                log_llm(rid, stars, cls, text, reply)
                 llm_logs_emitted += 1
 
             if used_llm:
@@ -464,10 +464,11 @@ def main():
 
         except Exception as e:
             failed += 1
-            logging.warning("Ошибка по id=%s: %s", c.get("id"), e)
+            logging.warning("Ошибка по id=%s: %s", rid, e)
 
     logging.info("Готово. Ответов: LLM=%d, local=%d, опубликовано=%d, пустых опубликовано=%d, ошибок=%d (DRY_RUN=%s)",
                  processed_llm, processed_local, published, empty_published, failed, "1" if DRY_RUN else "0")
+    return 1 if failed else 0
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
