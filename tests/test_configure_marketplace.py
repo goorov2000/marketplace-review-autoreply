@@ -70,3 +70,37 @@ def test_invalid_header_exception_does_not_echo_entered_key(tmp_path, monkeypatc
     assert output.err.strip() == "InvalidHeader"
     assert "fake-private" not in output.out + output.err
     assert path.read_text() == original
+
+
+@pytest.mark.parametrize(("message", "hint"), [
+    ("Seller must have premium subscription", "ограничение подписки"),
+    ("Request IP is not in allowlist", "по IP-адресу"),
+    ("Invalid Api-Key or Client-Id", "Client ID и ключ одного кабинета"),
+    ("Not enough permissions for this method", "права доступа"),
+    ("Access denied", "не уточнил причину"),
+])
+def test_ozon_error_classification_never_prints_server_text(message, hint):
+    response = Mock()
+    response.json.return_value = {"code": 7, "message": message + " fake-private-key"}
+    result = wizard.ozon_error_hint(response, {"OZON_API_KEY": "fake-private-key"})
+    assert hint in result
+    assert "Код ошибки Ozon: 7" in result
+    assert "fake-private" not in result
+    assert message not in result
+
+
+def test_ozon_html_error_does_not_get_misdiagnosed_as_subscription():
+    response = Mock(text="secret-header: fake-private-key")
+    response.json.side_effect = ValueError("bad JSON with fake-private-key")
+    result = wizard.ozon_error_hint(response, {})
+    assert "не JSON" in result
+    assert "подписка по этому ответу не определена" in result
+    assert "fake-private" not in result
+
+
+def test_ozon_error_ignores_nonstring_message_and_secret_like_error_code():
+    response = Mock()
+    response.json.return_value = {"code": "fake-private-key", "message": {"api-key": "fake-private-key"}}
+    result = wizard.ozon_error_hint(response, {})
+    assert "не уточнил причину" in result
+    assert "fake-private" not in result
